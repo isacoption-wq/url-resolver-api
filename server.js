@@ -9,7 +9,11 @@ app.use(express.json());
 // Health Check
 // =======================
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({ 
+    status: "ok", 
+    services: ["amazon", "shopee", "mercadolivre", "magalu"],
+    timestamp: new Date().toISOString() 
+  });
 });
 
 // =======================
@@ -69,18 +73,91 @@ function extractAmazonAsin(url) {
 }
 
 // =======================
+// Extrator Mercado Livre ID (NOVO)
+// =======================
+function extractMercadoLivreId(url) {
+  if (!url) return null;
+
+  const patterns = [
+    // /p/MLB1234567890
+    /\/p\/(MLB\d{10,14})/i,
+    // MLB-1234567890 ou MLB1234567890 no path
+    /\/(MLB-?\d{10,14})/i,
+    // produto/MLB1234567890
+    /\/produto\/(MLB-?\d{10,14})/i,
+    // item/MLB1234567890
+    /\/item\/(MLB-?\d{10,14})/i,
+    // ?id=MLB1234567890
+    /[?&]id=(MLB-?\d{10,14})/i,
+    // MLB no meio da URL com hífen ou não
+    /(MLB-?\d{10,14})(?:[?#\/]|$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      // Normalizar: remover hífens e uppercase
+      return match[1].replace(/-/g, '').toUpperCase();
+    }
+  }
+
+  return null;
+}
+
+// =======================
+// Extrator Magalu ID (NOVO)
+// =======================
+function extractMagaluId(url) {
+  if (!url) return null;
+
+  const patterns = [
+    // /p/abc123def456/ ou /p/abc123def456
+    /\/p\/([a-z0-9]{6,20})\/?(?:[?#]|$)/i,
+    // /produto/abc123def456
+    /\/produto\/([a-z0-9]{6,20})/i,
+    // /{categoria}/p/{id}/
+    /\/[^\/]+\/p\/([a-z0-9]{6,20})/i,
+    // SKU no query string
+    /[?&]sku=([a-z0-9]{6,20})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1].toLowerCase();
+    }
+  }
+
+  return null;
+}
+
+// =======================
 // Detectar Plataforma
 // =======================
 function detectPlatform(url) {
   if (!url) return "unknown";
   const lower = url.toLowerCase();
 
-  if (lower.includes("amazon.") || lower.includes("amzn.to") || lower.includes("amzn.com")) {
+  // Amazon
+  if (lower.includes("amazon.") || lower.includes("amzn.to") || lower.includes("amzn.com") || lower.includes("a.co/")) {
     return "amazon";
   }
-  if (lower.includes("shopee.") || lower.includes("shp.ee")) {
+  
+  // Shopee
+  if (lower.includes("shopee.") || lower.includes("shp.ee") || lower.includes("s.shopee.")) {
     return "shopee";
   }
+  
+  // Mercado Livre
+  if (lower.includes("mercadolivre.com") || lower.includes("mercadolibre.com") || lower.includes("meli.com") || lower.includes("produto.mercadolivre")) {
+    return "mercadolivre";
+  }
+  
+  // Magalu
+  if (lower.includes("magazineluiza.com") || lower.includes("magazinevoce.com") || lower.includes("magalu.com")) {
+    return "magalu";
+  }
+
   return "unknown";
 }
 
@@ -100,12 +177,23 @@ async function resolveUrl(url) {
       }
     });
 
-    const finalUrl = res.request?.res?.responseUrl || res.config?.url || url;
+    const finalUrl = res.request?.res?.responseUrl || res.request?._redirectable?._currentUrl || res.config?.url || url;
     console.log(`[RESOLVE] ${url} -> ${finalUrl}`);
     return finalUrl;
   } catch (err) {
-    console.error(`[RESOLVE ERROR] ${url}: ${err.message}`);
-    throw err;
+    // Fallback com HEAD
+    try {
+      const headRes = await axios.head(url, {
+        maxRedirects: 10,
+        timeout: 10000,
+        validateStatus: () => true,
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      return headRes.request?.res?.responseUrl || url;
+    } catch {
+      console.error(`[RESOLVE ERROR] ${url}: ${err.message}`);
+      throw err;
+    }
   }
 }
 
@@ -114,17 +202,30 @@ async function resolveUrl(url) {
 // =======================
 function isShortLink(url) {
   if (!url) return false;
-  const shortDomains = ["amzn.to", "amzn.com/", "shp.ee", "s.shopee.", "bit.ly", "tinyurl."];
-  return shortDomains.some(d => url.toLowerCase().includes(d));
+  const lower = url.toLowerCase();
+  
+  const shortDomains = [
+    // Amazon
+    "amzn.to", "amzn.com/", "a.co/",
+    // Shopee
+    "shp.ee", "s.shopee.",
+    // Mercado Livre
+    "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/",
+    // Magalu
+    "magalu.com/", "mglu.me/",
+    // Genéricos
+    "bit.ly", "tinyurl.", "t.co/", "goo.gl/"
+  ];
+  
+  return shortDomains.some(d => lower.includes(d));
 }
 
 // =======================
-// POST /amazon/sign - Gera assinatura AWS V4 para PA-API (CORRIGIDO)
+// POST /amazon/sign - Gera assinatura AWS V4 para PA-API
 // =======================
 app.post("/amazon/sign", (req, res) => {
   const { accessKey, secretKey, partnerTag, asin } = req.body;
 
-  // Validação
   if (!accessKey || !secretKey || !partnerTag || !asin) {
     return res.status(400).json({
       ok: false,
@@ -134,12 +235,10 @@ app.post("/amazon/sign", (req, res) => {
   }
 
   try {
-    // Configurações PA-API Brasil
     const host = 'webservices.amazon.com.br';
     const region = 'us-east-1';
     const service = 'ProductAdvertisingAPI';
 
-    // Payload da requisição
     const payload = {
       "PartnerTag": partnerTag,
       "PartnerType": "Associates",
@@ -158,7 +257,6 @@ app.post("/amazon/sign", (req, res) => {
 
     const body = JSON.stringify(payload);
 
-    // Configuração da requisição para assinar
     const opts = {
       host: host,
       path: '/paapi5/getitems',
@@ -174,17 +272,14 @@ app.post("/amazon/sign", (req, res) => {
       body: body
     };
 
-    // Credenciais AWS
     const credentials = {
       accessKeyId: accessKey,
       secretAccessKey: secretKey
     };
 
-    // Assinar a requisição usando aws4
     const signedRequest = aws4.sign(opts, credentials);
 
     console.log(`[SIGN] ASIN: ${asin}, Partner: ${partnerTag}`);
-    console.log(`[SIGN] X-Amz-Date: ${signedRequest.headers['X-Amz-Date']}`);
 
     return res.json({
       ok: true,
@@ -212,7 +307,7 @@ app.post("/amazon/sign", (req, res) => {
 });
 
 // =======================
-// POST /amazon/product - Busca produto direto (opcional)
+// POST /amazon/product - Busca produto direto
 // =======================
 app.post("/amazon/product", async (req, res) => {
   const { accessKey, secretKey, partnerTag, asin } = req.body;
@@ -323,20 +418,27 @@ app.post("/resolve", async (req, res) => {
   }
 
   try {
-    const platform = detectPlatform(url);
     const needsResolve = isShortLink(url);
-
     let finalUrl = url;
+    
     if (needsResolve) {
       finalUrl = await resolveUrl(url);
     }
+
+    const platform = detectPlatform(finalUrl);
 
     let result = {
       ok: false,
       platform,
       original_url: url,
       final_url: finalUrl,
-      was_short_link: needsResolve
+      was_short_link: needsResolve,
+      // Campos de compatibilidade
+      asin: null,
+      shopId: null,
+      itemId: null,
+      mlbId: null,
+      magaluId: null
     };
 
     if (platform === "amazon") {
@@ -348,9 +450,17 @@ app.post("/resolve", async (req, res) => {
       result.ok = !!ids;
       result.shopId = ids?.shopId || null;
       result.itemId = ids?.itemId || null;
+    } else if (platform === "mercadolivre") {
+      const mlbId = extractMercadoLivreId(finalUrl);
+      result.ok = !!mlbId;
+      result.mlbId = mlbId;
+    } else if (platform === "magalu") {
+      const magaluId = extractMagaluId(finalUrl);
+      result.ok = !!magaluId;
+      result.magaluId = magaluId;
     } else {
       result.error = "unsupported_platform";
-      result.message = "Plataforma não suportada. Use Amazon ou Shopee.";
+      result.message = "Plataforma não suportada. Use Amazon, Shopee, Mercado Livre ou Magalu.";
     }
 
     console.log(`[RESULT] Platform: ${platform}, OK: ${result.ok}, URL: ${url}`);
@@ -433,17 +543,83 @@ app.post("/resolve/shopee", async (req, res) => {
 });
 
 // =======================
+// POST /resolve/mercadolivre (NOVO)
+// =======================
+app.post("/resolve/mercadolivre", async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ ok: false, error: "url_required" });
+  }
+
+  try {
+    const needsResolve = isShortLink(url);
+    const finalUrl = needsResolve ? await resolveUrl(url) : url;
+    const mlbId = extractMercadoLivreId(finalUrl);
+
+    return res.json({
+      ok: !!mlbId,
+      mlbId,
+      original_url: url,
+      final_url: finalUrl,
+      was_short_link: needsResolve
+    });
+
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+      original_url: url
+    });
+  }
+});
+
+// =======================
+// POST /resolve/magalu (NOVO)
+// =======================
+app.post("/resolve/magalu", async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ ok: false, error: "url_required" });
+  }
+
+  try {
+    const needsResolve = isShortLink(url);
+    const finalUrl = needsResolve ? await resolveUrl(url) : url;
+    const magaluId = extractMagaluId(finalUrl);
+
+    return res.json({
+      ok: !!magaluId,
+      magaluId,
+      original_url: url,
+      final_url: finalUrl,
+      was_short_link: needsResolve
+    });
+
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+      original_url: url
+    });
+  }
+});
+
+// =======================
 // Iniciar servidor
 // =======================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 URL Resolver rodando na porta ${PORT}`);
-  console.log(`📦 Suporta: Amazon, Shopee`);
+  console.log(`📦 Suporta: Amazon, Shopee, Mercado Livre, Magalu`);
   console.log(`🔗 Endpoints:`);
-  console.log(`   POST /resolve         - Detecta plataforma automaticamente`);
-  console.log(`   POST /resolve/amazon  - Apenas Amazon`);
-  console.log(`   POST /resolve/shopee  - Apenas Shopee`);
-  console.log(`   POST /amazon/sign     - Gera assinatura AWS V4 para PA-API`);
-  console.log(`   POST /amazon/product  - Busca produto Amazon direto (novo!)`);
-  console.log(`   GET  /health          - Health check`);
+  console.log(`   POST /resolve              - Detecta plataforma automaticamente`);
+  console.log(`   POST /resolve/amazon       - Apenas Amazon`);
+  console.log(`   POST /resolve/shopee       - Apenas Shopee`);
+  console.log(`   POST /resolve/mercadolivre - Apenas Mercado Livre (NOVO)`);
+  console.log(`   POST /resolve/magalu       - Apenas Magalu (NOVO)`);
+  console.log(`   POST /amazon/sign          - Gera assinatura AWS V4 para PA-API`);
+  console.log(`   POST /amazon/product       - Busca produto Amazon direto`);
+  console.log(`   GET  /health               - Health check`);
 });

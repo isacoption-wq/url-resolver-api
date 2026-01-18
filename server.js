@@ -21,19 +21,14 @@ app.get("/health", (req, res) => {
 // =======================
 function extractShopeeIds(url) {
   if (!url) return null;
-
   const clean = url.split("?")[0].split("#")[0];
   let m;
-
   m = clean.match(/\/product\/(\d+)\/(\d+)/i);
   if (m) return { shopId: m[1], itemId: m[2] };
-
   m = clean.match(/\/[^\/]+\/(\d+)\/(\d+)/);
   if (m) return { shopId: m[1], itemId: m[2] };
-
   m = clean.match(/(?:\.i|-i)\.(\d+)\.(\d+)/i);
   if (m) return { shopId: m[1], itemId: m[2] };
-
   m = clean.match(/(\d{6,})\.(\d{6,})/);
   if (m) {
     const a = m[1], b = m[2];
@@ -41,7 +36,6 @@ function extractShopeeIds(url) {
       ? { itemId: a, shopId: b }
       : { itemId: b, shopId: a };
   }
-
   return null;
 }
 
@@ -50,7 +44,6 @@ function extractShopeeIds(url) {
 // =======================
 function extractAmazonAsin(url) {
   if (!url) return null;
-
   const patterns = [
     /\/dp\/([A-Z0-9]{10})/i,
     /\/gp\/product\/([A-Z0-9]{10})/i,
@@ -61,23 +54,20 @@ function extractAmazonAsin(url) {
     /[?&]asin=([A-Z0-9]{10})/i,
     /\/([A-Z0-9]{10})(?:[/?]|$)/i
   ];
-
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match && match[1] && /^[A-Z0-9]{10}$/i.test(match[1])) {
       return match[1].toUpperCase();
     }
   }
-
   return null;
 }
 
 // =======================
-// Extrator Mercado Livre ID (NOVO)
+// Extrator Mercado Livre ID
 // =======================
 function extractMercadoLivreId(url) {
   if (!url) return null;
-
   const patterns = [
     // /p/MLB1234567890
     /\/p\/(MLB\d{10,14})/i,
@@ -92,7 +82,6 @@ function extractMercadoLivreId(url) {
     // MLB no meio da URL com hífen ou não
     /(MLB-?\d{10,14})(?:[?#\/]|$)/i
   ];
-
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match && match[1]) {
@@ -100,16 +89,14 @@ function extractMercadoLivreId(url) {
       return match[1].replace(/-/g, '').toUpperCase();
     }
   }
-
   return null;
 }
 
 // =======================
-// Extrator Magalu ID (NOVO)
+// Extrator Magalu ID
 // =======================
 function extractMagaluId(url) {
   if (!url) return null;
-
   const patterns = [
     // /p/abc123def456/ ou /p/abc123def456
     /\/p\/([a-z0-9]{6,20})\/?(?:[?#]|$)/i,
@@ -120,14 +107,12 @@ function extractMagaluId(url) {
     // SKU no query string
     /[?&]sku=([a-z0-9]{6,20})/i
   ];
-
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match && match[1]) {
       return match[1].toLowerCase();
     }
   }
-
   return null;
 }
 
@@ -137,7 +122,7 @@ function extractMagaluId(url) {
 function detectPlatform(url) {
   if (!url) return "unknown";
   const lower = url.toLowerCase();
-
+  
   // Amazon
   if (lower.includes("amazon.") || lower.includes("amzn.to") || lower.includes("amzn.com") || lower.includes("a.co/")) {
     return "amazon";
@@ -162,7 +147,121 @@ function detectPlatform(url) {
 }
 
 // =======================
-// Resolver URL curta
+// Verificar se é short link ou URL especial que precisa resolver
+// =======================
+function isShortLink(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  
+  const shortDomains = [
+    // Amazon
+    "amzn.to", "amzn.com/", "a.co/",
+    // Shopee
+    "shp.ee", "s.shopee.",
+    // Mercado Livre - short links
+    "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/",
+    // Magalu
+    "magalu.com/", "mglu.me/",
+    // Genéricos
+    "bit.ly", "tinyurl.", "t.co/", "goo.gl/"
+  ];
+  
+  // Verificar short domains tradicionais
+  if (shortDomains.some(d => lower.includes(d))) {
+    return true;
+  }
+  
+  // ====== NOVO: Detectar URLs especiais do Mercado Livre ======
+  
+  // URLs sociais/promocionais: /social/nomepagina
+  if (lower.includes("/social/")) {
+    return true;
+  }
+  
+  // URLs de campanhas JMS
+  if (lower.includes("/jms/")) {
+    return true;
+  }
+  
+  // URLs com parâmetros de tracking que indicam redirect
+  if (lower.includes("forceInApp=true")) {
+    return true;
+  }
+  
+  // URLs com matt_tool (tracking de campanhas ML)
+  if (lower.includes("matt_tool=")) {
+    return true;
+  }
+  
+  // URLs de ofertas/deals
+  if (lower.includes("/deals/") || lower.includes("/ofertas/")) {
+    return true;
+  }
+  
+  // URLs de vendedor/seller
+  if (lower.includes("/perfil/") && lower.includes("mercadolivre")) {
+    return true;
+  }
+  
+  return false;
+}
+
+// =======================
+// Extrair URL de redirect do HTML (para JS/Meta redirects)
+// =======================
+function extractRedirectFromHtml(html, originalUrl) {
+  if (!html) return null;
+  
+  // 1. Meta refresh redirect
+  const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'\s>]+)/i);
+  if (metaMatch && metaMatch[1]) {
+    console.log(`[EXTRACT] Found meta refresh: ${metaMatch[1]}`);
+    return metaMatch[1];
+  }
+  
+  // 2. JavaScript window.location redirect
+  const jsLocationPatterns = [
+    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+    /window\.location\s*=\s*["']([^"']+)["']/i,
+    /location\.href\s*=\s*["']([^"']+)["']/i,
+    /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
+    /window\.location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i
+  ];
+  
+  for (const pattern of jsLocationPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[1].startsWith('http')) {
+      console.log(`[EXTRACT] Found JS redirect: ${match[1]}`);
+      return match[1];
+    }
+  }
+  
+  // 3. Canonical link (fallback - pode indicar a URL real do produto)
+  const canonicalMatch = html.match(/<link[^>]*rel=["']?canonical["']?[^>]*href=["']([^"']+)["']/i);
+  if (canonicalMatch && canonicalMatch[1]) {
+    const canonical = canonicalMatch[1];
+    // Só usar canonical se for uma URL de produto (tem MLB)
+    if (canonical.includes('MLB') || canonical.includes('/p/')) {
+      console.log(`[EXTRACT] Found canonical: ${canonical}`);
+      return canonical;
+    }
+  }
+  
+  // 4. Open Graph URL
+  const ogUrlMatch = html.match(/<meta[^>]*property=["']?og:url["']?[^>]*content=["']([^"']+)["']/i);
+  if (ogUrlMatch && ogUrlMatch[1]) {
+    const ogUrl = ogUrlMatch[1];
+    if (ogUrl.includes('MLB') || ogUrl.includes('/p/')) {
+      console.log(`[EXTRACT] Found og:url: ${ogUrl}`);
+      return ogUrl;
+    }
+  }
+  
+  return null;
+}
+
+// =======================
+// Resolver URL curta/redirect
 // =======================
 async function resolveUrl(url) {
   try {
@@ -177,9 +276,59 @@ async function resolveUrl(url) {
       }
     });
 
-    const finalUrl = res.request?.res?.responseUrl || res.request?._redirectable?._currentUrl || res.config?.url || url;
-    console.log(`[RESOLVE] ${url} -> ${finalUrl}`);
+    let finalUrl = res.request?.res?.responseUrl || res.request?._redirectable?._currentUrl || res.config?.url || url;
+    
+    console.log(`[RESOLVE] HTTP redirect: ${url} -> ${finalUrl}`);
+    
+    // ====== NOVO: Verificar se precisa extrair redirect do HTML ======
+    // Isso acontece quando o ML usa JavaScript ou meta refresh para redirecionar
+    
+    const isMercadoLivre = finalUrl.toLowerCase().includes('mercadolivre') || finalUrl.toLowerCase().includes('mercadolibre');
+    const stillNeedsResolve = finalUrl.includes('/social/') || finalUrl.includes('/jms/') || finalUrl.includes('forceInApp');
+    
+    if (isMercadoLivre && stillNeedsResolve && res.data && typeof res.data === 'string') {
+      const extractedUrl = extractRedirectFromHtml(res.data, finalUrl);
+      
+      if (extractedUrl && extractedUrl !== finalUrl) {
+        console.log(`[RESOLVE] HTML extraction: ${finalUrl} -> ${extractedUrl}`);
+        
+        // Se a URL extraída ainda não tem o ID do produto, tenta seguir ela
+        if (!extractMercadoLivreId(extractedUrl)) {
+          try {
+            const secondRes = await axios.get(extractedUrl, {
+              maxRedirects: 10,
+              timeout: 15000,
+              validateStatus: () => true,
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+              }
+            });
+            
+            const secondFinalUrl = secondRes.request?.res?.responseUrl || secondRes.request?._redirectable?._currentUrl || extractedUrl;
+            console.log(`[RESOLVE] Second hop: ${extractedUrl} -> ${secondFinalUrl}`);
+            
+            // Tentar extrair do segundo HTML também
+            if (secondRes.data && typeof secondRes.data === 'string') {
+              const secondExtracted = extractRedirectFromHtml(secondRes.data, secondFinalUrl);
+              if (secondExtracted && extractMercadoLivreId(secondExtracted)) {
+                return secondExtracted;
+              }
+            }
+            
+            return secondFinalUrl;
+          } catch (err) {
+            console.log(`[RESOLVE] Second hop failed, using: ${extractedUrl}`);
+            return extractedUrl;
+          }
+        }
+        
+        return extractedUrl;
+      }
+    }
+    
     return finalUrl;
+    
   } catch (err) {
     // Fallback com HEAD
     try {
@@ -195,29 +344,6 @@ async function resolveUrl(url) {
       throw err;
     }
   }
-}
-
-// =======================
-// Verificar se é short link
-// =======================
-function isShortLink(url) {
-  if (!url) return false;
-  const lower = url.toLowerCase();
-  
-  const shortDomains = [
-    // Amazon
-    "amzn.to", "amzn.com/", "a.co/",
-    // Shopee
-    "shp.ee", "s.shopee.",
-    // Mercado Livre
-    "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/",
-    // Magalu
-    "magalu.com/", "mglu.me/",
-    // Genéricos
-    "bit.ly", "tinyurl.", "t.co/", "goo.gl/"
-  ];
-  
-  return shortDomains.some(d => lower.includes(d));
 }
 
 // =======================
@@ -295,7 +421,6 @@ app.post("/amazon/sign", (req, res) => {
         'Authorization': signedRequest.headers['Authorization']
       }
     });
-
   } catch (err) {
     console.error(`[SIGN ERROR] ${err.message}`);
     return res.status(500).json({
@@ -464,6 +589,7 @@ app.post("/resolve", async (req, res) => {
     }
 
     console.log(`[RESULT] Platform: ${platform}, OK: ${result.ok}, URL: ${url}`);
+
     return res.json(result);
 
   } catch (err) {
@@ -499,7 +625,6 @@ app.post("/resolve/amazon", async (req, res) => {
       final_url: finalUrl,
       was_short_link: needsResolve
     });
-
   } catch (err) {
     return res.status(500).json({
       ok: false,
@@ -532,7 +657,6 @@ app.post("/resolve/shopee", async (req, res) => {
       final_url: finalUrl,
       was_short_link: needsResolve
     });
-
   } catch (err) {
     return res.status(500).json({
       ok: false,
@@ -543,7 +667,7 @@ app.post("/resolve/shopee", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/mercadolivre (NOVO)
+// POST /resolve/mercadolivre (específico)
 // =======================
 app.post("/resolve/mercadolivre", async (req, res) => {
   const { url } = req.body;
@@ -564,7 +688,6 @@ app.post("/resolve/mercadolivre", async (req, res) => {
       final_url: finalUrl,
       was_short_link: needsResolve
     });
-
   } catch (err) {
     return res.status(500).json({
       ok: false,
@@ -575,7 +698,7 @@ app.post("/resolve/mercadolivre", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/magalu (NOVO)
+// POST /resolve/magalu (específico)
 // =======================
 app.post("/resolve/magalu", async (req, res) => {
   const { url } = req.body;
@@ -596,7 +719,6 @@ app.post("/resolve/magalu", async (req, res) => {
       final_url: finalUrl,
       was_short_link: needsResolve
     });
-
   } catch (err) {
     return res.status(500).json({
       ok: false,
@@ -610,6 +732,7 @@ app.post("/resolve/magalu", async (req, res) => {
 // Iniciar servidor
 // =======================
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`🚀 URL Resolver rodando na porta ${PORT}`);
   console.log(`📦 Suporta: Amazon, Shopee, Mercado Livre, Magalu`);
@@ -617,9 +740,10 @@ app.listen(PORT, () => {
   console.log(`   POST /resolve              - Detecta plataforma automaticamente`);
   console.log(`   POST /resolve/amazon       - Apenas Amazon`);
   console.log(`   POST /resolve/shopee       - Apenas Shopee`);
-  console.log(`   POST /resolve/mercadolivre - Apenas Mercado Livre (NOVO)`);
-  console.log(`   POST /resolve/magalu       - Apenas Magalu (NOVO)`);
+  console.log(`   POST /resolve/mercadolivre - Apenas Mercado Livre`);
+  console.log(`   POST /resolve/magalu       - Apenas Magalu`);
   console.log(`   POST /amazon/sign          - Gera assinatura AWS V4 para PA-API`);
   console.log(`   POST /amazon/product       - Busca produto Amazon direto`);
   console.log(`   GET  /health               - Health check`);
+  console.log(`✨ NOVO: Suporte a URLs sociais do Mercado Livre (/social/, /jms/, etc.)`);
 });

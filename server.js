@@ -69,23 +69,16 @@ function extractAmazonAsin(url) {
 function extractMercadoLivreId(url) {
   if (!url) return null;
   const patterns = [
-    // /p/MLB1234567890
     /\/p\/(MLB\d{10,14})/i,
-    // MLB-1234567890 ou MLB1234567890 no path
     /\/(MLB-?\d{10,14})/i,
-    // produto/MLB1234567890
     /\/produto\/(MLB-?\d{10,14})/i,
-    // item/MLB1234567890
     /\/item\/(MLB-?\d{10,14})/i,
-    // ?id=MLB1234567890
     /[?&]id=(MLB-?\d{10,14})/i,
-    // MLB no meio da URL com hífen ou não
     /(MLB-?\d{10,14})(?:[?#\/]|$)/i
   ];
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match && match[1]) {
-      // Normalizar: remover hífens e uppercase
       return match[1].replace(/-/g, '').toUpperCase();
     }
   }
@@ -98,13 +91,9 @@ function extractMercadoLivreId(url) {
 function extractMagaluId(url) {
   if (!url) return null;
   const patterns = [
-    // /p/abc123def456/ ou /p/abc123def456
     /\/p\/([a-z0-9]{6,20})\/?(?:[?#]|$)/i,
-    // /produto/abc123def456
     /\/produto\/([a-z0-9]{6,20})/i,
-    // /{categoria}/p/{id}/
     /\/[^\/]+\/p\/([a-z0-9]{6,20})/i,
-    // SKU no query string
     /[?&]sku=([a-z0-9]{6,20})/i
   ];
   for (const pattern of patterns) {
@@ -122,138 +111,87 @@ function extractMagaluId(url) {
 function detectPlatform(url) {
   if (!url) return "unknown";
   const lower = url.toLowerCase();
-  
-  // Amazon
   if (lower.includes("amazon.") || lower.includes("amzn.to") || lower.includes("amzn.com") || lower.includes("a.co/")) {
     return "amazon";
   }
-  
-  // Shopee
   if (lower.includes("shopee.") || lower.includes("shp.ee") || lower.includes("s.shopee.")) {
     return "shopee";
   }
-  
-  // Mercado Livre
   if (lower.includes("mercadolivre.com") || lower.includes("mercadolibre.com") || lower.includes("meli.com") || lower.includes("produto.mercadolivre")) {
     return "mercadolivre";
   }
-  
-  // Magalu
   if (lower.includes("magazineluiza.com") || lower.includes("magazinevoce.com") || lower.includes("magalu.com")) {
     return "magalu";
   }
-
   return "unknown";
 }
 
 // =======================
-// Verificar se é short link ou URL especial que precisa resolver
+// Verificar se é short link ou URL especial
 // =======================
 function isShortLink(url) {
   if (!url) return false;
   const lower = url.toLowerCase();
   
-  const shortDomains = [
+  const shortPatterns = [
     // Amazon
     "amzn.to", "amzn.com/", "a.co/",
     // Shopee
     "shp.ee", "s.shopee.",
-    // Mercado Livre - short links
+    // Mercado Livre - SHORT LINKS
     "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/",
+    // Mercado Livre - SOCIAL/PROMO URLs (NOVO!)
+    "/social/",
+    "/jms/",
+    "/gz/webdevice/",
+    "/deals/",
+    "/ofertas/",
+    "forceInApp=true",
+    "matt_tool=",
     // Magalu
     "magalu.com/", "mglu.me/",
     // Genéricos
     "bit.ly", "tinyurl.", "t.co/", "goo.gl/"
   ];
   
-  // Verificar short domains tradicionais
-  if (shortDomains.some(d => lower.includes(d))) {
-    return true;
-  }
-  
-  // ====== NOVO: Detectar URLs especiais do Mercado Livre ======
-  
-  // URLs sociais/promocionais: /social/nomepagina
-  if (lower.includes("/social/")) {
-    return true;
-  }
-  
-  // URLs de campanhas JMS
-  if (lower.includes("/jms/")) {
-    return true;
-  }
-  
-  // URLs com parâmetros de tracking que indicam redirect
-  if (lower.includes("forceInApp=true")) {
-    return true;
-  }
-  
-  // URLs com matt_tool (tracking de campanhas ML)
-  if (lower.includes("matt_tool=")) {
-    return true;
-  }
-  
-  // URLs de ofertas/deals
-  if (lower.includes("/deals/") || lower.includes("/ofertas/")) {
-    return true;
-  }
-  
-  // URLs de vendedor/seller
-  if (lower.includes("/perfil/") && lower.includes("mercadolivre")) {
-    return true;
-  }
-  
-  return false;
+  return shortPatterns.some(p => lower.includes(p));
 }
 
 // =======================
-// Extrair URL de redirect do HTML (para JS/Meta redirects)
+// Extrair URL do parâmetro "go=" (webdevice wrapper)
 // =======================
-function extractRedirectFromHtml(html, originalUrl) {
-  if (!html) return null;
+function extractGoParameter(url) {
+  if (!url) return null;
   
-  // 1. Meta refresh redirect
-  const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'\s>]+)/i);
-  if (metaMatch && metaMatch[1]) {
-    console.log(`[EXTRACT] Found meta refresh: ${metaMatch[1]}`);
-    return metaMatch[1];
-  }
-  
-  // 2. JavaScript window.location redirect
-  const jsLocationPatterns = [
-    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
-    /window\.location\s*=\s*["']([^"']+)["']/i,
-    /location\.href\s*=\s*["']([^"']+)["']/i,
-    /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
-    /window\.location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i
-  ];
-  
-  for (const pattern of jsLocationPatterns) {
-    const match = html.match(pattern);
-    if (match && match[1] && match[1].startsWith('http')) {
-      console.log(`[EXTRACT] Found JS redirect: ${match[1]}`);
-      return match[1];
+  try {
+    // Tentar extrair o parâmetro "go" da URL
+    const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const goParam = urlObj.searchParams.get('go');
+    
+    if (goParam) {
+      // Decodificar a URL (pode estar duplamente encodada)
+      let decoded = decodeURIComponent(goParam);
+      // Tentar decodificar novamente caso esteja duplamente encodada
+      try {
+        if (decoded.includes('%')) {
+          decoded = decodeURIComponent(decoded);
+        }
+      } catch (e) {}
+      
+      console.log(`[GO PARAM] Extracted: ${decoded}`);
+      return decoded;
     }
-  }
-  
-  // 3. Canonical link (fallback - pode indicar a URL real do produto)
-  const canonicalMatch = html.match(/<link[^>]*rel=["']?canonical["']?[^>]*href=["']([^"']+)["']/i);
-  if (canonicalMatch && canonicalMatch[1]) {
-    const canonical = canonicalMatch[1];
-    // Só usar canonical se for uma URL de produto (tem MLB)
-    if (canonical.includes('MLB') || canonical.includes('/p/')) {
-      console.log(`[EXTRACT] Found canonical: ${canonical}`);
-      return canonical;
-    }
-  }
-  
-  // 4. Open Graph URL
-  const ogUrlMatch = html.match(/<meta[^>]*property=["']?og:url["']?[^>]*content=["']([^"']+)["']/i);
-  if (ogUrlMatch && ogUrlMatch[1]) {
-    const ogUrl = ogUrlMatch[1];
-    if (ogUrl.includes('MLB') || ogUrl.includes('/p/')) {
-      console.log(`[EXTRACT] Found og:url: ${ogUrl}`);
-      return ogUrl;
+  } catch (e) {
+    // Fallback com regex
+    const match = url.match(/[?&]go=([^&]+)/);
+    if (match) {
+      let decoded = decodeURIComponent(match[1]);
+      try {
+        if (decoded.includes('%')) {
+          decoded = decodeURIComponent(decoded);
+        }
+      } catch (e) {}
+      return decoded;
     }
   }
   
@@ -261,97 +199,202 @@ function extractRedirectFromHtml(html, originalUrl) {
 }
 
 // =======================
-// Resolver URL curta/redirect
+// Verificar se URL ainda precisa de resolução (ML)
 // =======================
-async function resolveUrl(url) {
-  try {
-    const res = await axios.get(url, {
-      maxRedirects: 10,
-      timeout: 15000,
-      validateStatus: () => true,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-      }
-    });
-
-    let finalUrl = res.request?.res?.responseUrl || res.request?._redirectable?._currentUrl || res.config?.url || url;
-    
-    console.log(`[RESOLVE] HTTP redirect: ${url} -> ${finalUrl}`);
-    
-    // ====== NOVO: Verificar se precisa extrair redirect do HTML ======
-    // Isso acontece quando o ML usa JavaScript ou meta refresh para redirecionar
-    
-    const isMercadoLivre = finalUrl.toLowerCase().includes('mercadolivre') || finalUrl.toLowerCase().includes('mercadolibre');
-    const stillNeedsResolve = finalUrl.includes('/social/') || finalUrl.includes('/jms/') || finalUrl.includes('forceInApp');
-    
-    if (isMercadoLivre && stillNeedsResolve && res.data && typeof res.data === 'string') {
-      const extractedUrl = extractRedirectFromHtml(res.data, finalUrl);
-      
-      if (extractedUrl && extractedUrl !== finalUrl) {
-        console.log(`[RESOLVE] HTML extraction: ${finalUrl} -> ${extractedUrl}`);
-        
-        // Se a URL extraída ainda não tem o ID do produto, tenta seguir ela
-        if (!extractMercadoLivreId(extractedUrl)) {
-          try {
-            const secondRes = await axios.get(extractedUrl, {
-              maxRedirects: 10,
-              timeout: 15000,
-              validateStatus: () => true,
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-              }
-            });
-            
-            const secondFinalUrl = secondRes.request?.res?.responseUrl || secondRes.request?._redirectable?._currentUrl || extractedUrl;
-            console.log(`[RESOLVE] Second hop: ${extractedUrl} -> ${secondFinalUrl}`);
-            
-            // Tentar extrair do segundo HTML também
-            if (secondRes.data && typeof secondRes.data === 'string') {
-              const secondExtracted = extractRedirectFromHtml(secondRes.data, secondFinalUrl);
-              if (secondExtracted && extractMercadoLivreId(secondExtracted)) {
-                return secondExtracted;
-              }
-            }
-            
-            return secondFinalUrl;
-          } catch (err) {
-            console.log(`[RESOLVE] Second hop failed, using: ${extractedUrl}`);
-            return extractedUrl;
-          }
-        }
-        
-        return extractedUrl;
-      }
-    }
-    
-    return finalUrl;
-    
-  } catch (err) {
-    // Fallback com HEAD
-    try {
-      const headRes = await axios.head(url, {
-        maxRedirects: 10,
-        timeout: 10000,
-        validateStatus: () => true,
-        headers: { "User-Agent": "Mozilla/5.0" }
-      });
-      return headRes.request?.res?.responseUrl || url;
-    } catch {
-      console.error(`[RESOLVE ERROR] ${url}: ${err.message}`);
-      throw err;
-    }
-  }
+function needsFurtherResolution(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  
+  const unresolvedPatterns = [
+    "/social/",
+    "/jms/",
+    "/gz/webdevice/",
+    "/deals/",
+    "/ofertas/",
+    "forceInApp=true"
+  ];
+  
+  return unresolvedPatterns.some(p => lower.includes(p));
 }
 
 // =======================
-// POST /amazon/sign - Gera assinatura AWS V4 para PA-API
+// Extrair redirect de HTML
+// =======================
+function extractRedirectFromHtml(html, baseUrl) {
+  if (!html) return null;
+  
+  // 1. Meta refresh
+  const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'\s>]+)/i);
+  if (metaMatch) {
+    console.log(`[HTML] Found meta refresh: ${metaMatch[1]}`);
+    return metaMatch[1];
+  }
+  
+  // 2. JavaScript redirect
+  const jsPatterns = [
+    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+    /window\.location\s*=\s*["']([^"']+)["']/i,
+    /location\.href\s*=\s*["']([^"']+)["']/i,
+    /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i
+  ];
+  
+  for (const pattern of jsPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[1].startsWith('http')) {
+      console.log(`[HTML] Found JS redirect: ${match[1]}`);
+      return match[1];
+    }
+  }
+  
+  // 3. Canonical link
+  const canonicalMatch = html.match(/<link[^>]*rel=["']?canonical["']?[^>]*href=["']([^"']+)["']/i);
+  if (canonicalMatch && canonicalMatch[1].includes('/p/MLB')) {
+    console.log(`[HTML] Found canonical: ${canonicalMatch[1]}`);
+    return canonicalMatch[1];
+  }
+  
+  // 4. OG URL
+  const ogMatch = html.match(/<meta[^>]*property=["']?og:url["']?[^>]*content=["']([^"']+)["']/i);
+  if (ogMatch && ogMatch[1].includes('/p/MLB')) {
+    console.log(`[HTML] Found og:url: ${ogMatch[1]}`);
+    return ogMatch[1];
+  }
+  
+  // 5. Qualquer link com MLB ID no HTML
+  const mlbMatch = html.match(/https?:\/\/[^"'\s]*\/p\/MLB\d{10,14}[^"'\s]*/i);
+  if (mlbMatch) {
+    console.log(`[HTML] Found MLB link: ${mlbMatch[0]}`);
+    return mlbMatch[0];
+  }
+  
+  return null;
+}
+
+// =======================
+// Resolver URL com suporte a múltiplos hops
+// =======================
+async function resolveUrl(url, maxHops = 5) {
+  let currentUrl = url;
+  let hopCount = 0;
+  
+  console.log(`[RESOLVE] Starting: ${url}`);
+  
+  while (hopCount < maxHops) {
+    hopCount++;
+    
+    // Verificar se há parâmetro "go=" para extrair
+    if (currentUrl.includes('/gz/webdevice/') || currentUrl.includes('?go=')) {
+      const goUrl = extractGoParameter(currentUrl);
+      if (goUrl) {
+        console.log(`[RESOLVE] Hop ${hopCount}: Extracted go param -> ${goUrl}`);
+        currentUrl = goUrl;
+        continue;
+      }
+    }
+    
+    // Se não precisa mais resolução, retornar
+    if (!needsFurtherResolution(currentUrl) && hopCount > 1) {
+      // Verificar se já temos um MLB ID
+      const mlbId = extractMercadoLivreId(currentUrl);
+      if (mlbId) {
+        console.log(`[RESOLVE] Found MLB ID: ${mlbId}`);
+        break;
+      }
+    }
+    
+    // Fazer requisição HTTP
+    try {
+      console.log(`[RESOLVE] Hop ${hopCount}: Fetching ${currentUrl}`);
+      
+      const res = await axios.get(currentUrl, {
+        maxRedirects: 10,
+        timeout: 15000,
+        validateStatus: () => true,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+      });
+      
+      // URL após redirects HTTP
+      const httpFinalUrl = res.request?.res?.responseUrl || 
+                          res.request?._redirectable?._currentUrl || 
+                          res.config?.url || 
+                          currentUrl;
+      
+      console.log(`[RESOLVE] HTTP resolved to: ${httpFinalUrl}`);
+      
+      // Se mudou via HTTP redirect
+      if (httpFinalUrl !== currentUrl) {
+        currentUrl = httpFinalUrl;
+        
+        // Verificar se ainda precisa resolução
+        if (!needsFurtherResolution(currentUrl)) {
+          const mlbId = extractMercadoLivreId(currentUrl);
+          if (mlbId) {
+            console.log(`[RESOLVE] Success! MLB ID: ${mlbId}`);
+            break;
+          }
+        }
+      }
+      
+      // Verificar parâmetro "go" na URL resultante
+      if (httpFinalUrl.includes('?go=')) {
+        const goUrl = extractGoParameter(httpFinalUrl);
+        if (goUrl) {
+          console.log(`[RESOLVE] Found go param in result: ${goUrl}`);
+          currentUrl = goUrl;
+          continue;
+        }
+      }
+      
+      // Analisar HTML se ainda estamos em URL social/promo
+      if (needsFurtherResolution(currentUrl) && res.data && typeof res.data === 'string') {
+        const htmlRedirect = extractRedirectFromHtml(res.data, currentUrl);
+        if (htmlRedirect && htmlRedirect !== currentUrl) {
+          console.log(`[RESOLVE] Found in HTML: ${htmlRedirect}`);
+          currentUrl = htmlRedirect;
+          continue;
+        }
+      }
+      
+      // Se chegamos aqui e ainda não temos MLB, mas não há mais para onde ir
+      break;
+      
+    } catch (err) {
+      console.error(`[RESOLVE] Error on hop ${hopCount}: ${err.message}`);
+      
+      // Tentar HEAD como fallback
+      try {
+        const headRes = await axios.head(currentUrl, {
+          maxRedirects: 10,
+          timeout: 10000,
+          validateStatus: () => true,
+          headers: { "User-Agent": "Mozilla/5.0" }
+        });
+        const headUrl = headRes.request?.res?.responseUrl || currentUrl;
+        if (headUrl !== currentUrl) {
+          currentUrl = headUrl;
+          continue;
+        }
+      } catch (headErr) {
+        console.error(`[RESOLVE] HEAD also failed: ${headErr.message}`);
+      }
+      
+      break;
+    }
+  }
+  
+  console.log(`[RESOLVE] Final (${hopCount} hops): ${currentUrl}`);
+  return currentUrl;
+}
+
+// =======================
+// POST /amazon/sign
 // =======================
 app.post("/amazon/sign", (req, res) => {
   const { accessKey, secretKey, partnerTag, asin } = req.body;
-
   if (!accessKey || !secretKey || !partnerTag || !asin) {
     return res.status(400).json({
       ok: false,
@@ -359,12 +402,10 @@ app.post("/amazon/sign", (req, res) => {
       message: "Campos obrigatórios: accessKey, secretKey, partnerTag, asin"
     });
   }
-
   try {
     const host = 'webservices.amazon.com.br';
     const region = 'us-east-1';
     const service = 'ProductAdvertisingAPI';
-
     const payload = {
       "PartnerTag": partnerTag,
       "PartnerType": "Associates",
@@ -380,9 +421,7 @@ app.post("/amazon/sign", (req, res) => {
         "Images.Primary.Medium"
       ]
     };
-
     const body = JSON.stringify(payload);
-
     const opts = {
       host: host,
       path: '/paapi5/getitems',
@@ -397,16 +436,12 @@ app.post("/amazon/sign", (req, res) => {
       },
       body: body
     };
-
     const credentials = {
       accessKeyId: accessKey,
       secretAccessKey: secretKey
     };
-
     const signedRequest = aws4.sign(opts, credentials);
-
     console.log(`[SIGN] ASIN: ${asin}, Partner: ${partnerTag}`);
-
     return res.json({
       ok: true,
       asin: asin,
@@ -432,11 +467,10 @@ app.post("/amazon/sign", (req, res) => {
 });
 
 // =======================
-// POST /amazon/product - Busca produto direto
+// POST /amazon/product
 // =======================
 app.post("/amazon/product", async (req, res) => {
   const { accessKey, secretKey, partnerTag, asin } = req.body;
-
   if (!accessKey || !secretKey || !partnerTag || !asin) {
     return res.status(400).json({
       ok: false,
@@ -444,12 +478,10 @@ app.post("/amazon/product", async (req, res) => {
       message: "Campos obrigatórios: accessKey, secretKey, partnerTag, asin"
     });
   }
-
   try {
     const host = 'webservices.amazon.com.br';
     const region = 'us-east-1';
     const service = 'ProductAdvertisingAPI';
-
     const payload = {
       "PartnerTag": partnerTag,
       "PartnerType": "Associates",
@@ -465,9 +497,7 @@ app.post("/amazon/product", async (req, res) => {
         "Images.Primary.Medium"
       ]
     };
-
     const body = JSON.stringify(payload);
-
     const opts = {
       host: host,
       path: '/paapi5/getitems',
@@ -482,16 +512,12 @@ app.post("/amazon/product", async (req, res) => {
       },
       body: body
     };
-
     const credentials = {
       accessKeyId: accessKey,
       secretAccessKey: secretKey
     };
-
     const signedRequest = aws4.sign(opts, credentials);
-
     console.log(`[PRODUCT] Fetching ASIN: ${asin}`);
-
     const response = await axios({
       method: 'POST',
       url: `https://${host}/paapi5/getitems`,
@@ -499,18 +525,14 @@ app.post("/amazon/product", async (req, res) => {
       data: body,
       timeout: 30000
     });
-
     console.log(`[PRODUCT] Success for ASIN: ${asin}`);
-
     return res.json({
       ok: true,
       asin: asin,
       data: response.data
     });
-
   } catch (err) {
     console.error(`[PRODUCT ERROR] ${err.message}`);
-    
     if (err.response) {
       return res.status(err.response.status).json({
         ok: false,
@@ -519,7 +541,6 @@ app.post("/amazon/product", async (req, res) => {
         message: err.response.data
       });
     }
-
     return res.status(500).json({
       ok: false,
       error: "request_failed",
@@ -533,7 +554,6 @@ app.post("/amazon/product", async (req, res) => {
 // =======================
 app.post("/resolve", async (req, res) => {
   const { url } = req.body;
-
   if (!url) {
     return res.status(400).json({
       ok: false,
@@ -541,7 +561,6 @@ app.post("/resolve", async (req, res) => {
       message: "Campo 'url' é obrigatório"
     });
   }
-
   try {
     const needsResolve = isShortLink(url);
     let finalUrl = url;
@@ -549,23 +568,19 @@ app.post("/resolve", async (req, res) => {
     if (needsResolve) {
       finalUrl = await resolveUrl(url);
     }
-
     const platform = detectPlatform(finalUrl);
-
     let result = {
       ok: false,
       platform,
       original_url: url,
       final_url: finalUrl,
       was_short_link: needsResolve,
-      // Campos de compatibilidade
       asin: null,
       shopId: null,
       itemId: null,
       mlbId: null,
       magaluId: null
     };
-
     if (platform === "amazon") {
       const asin = extractAmazonAsin(finalUrl);
       result.ok = !!asin;
@@ -587,11 +602,8 @@ app.post("/resolve", async (req, res) => {
       result.error = "unsupported_platform";
       result.message = "Plataforma não suportada. Use Amazon, Shopee, Mercado Livre ou Magalu.";
     }
-
     console.log(`[RESULT] Platform: ${platform}, OK: ${result.ok}, URL: ${url}`);
-
     return res.json(result);
-
   } catch (err) {
     console.error(`[ERROR] ${err.message}`);
     return res.status(500).json({
@@ -604,20 +616,17 @@ app.post("/resolve", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/amazon (específico)
+// POST /resolve/amazon
 // =======================
 app.post("/resolve/amazon", async (req, res) => {
   const { url } = req.body;
-
   if (!url) {
     return res.status(400).json({ ok: false, error: "url_required" });
   }
-
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const asin = extractAmazonAsin(finalUrl);
-
     return res.json({
       ok: !!asin,
       asin,
@@ -635,20 +644,17 @@ app.post("/resolve/amazon", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/shopee (específico)
+// POST /resolve/shopee
 // =======================
 app.post("/resolve/shopee", async (req, res) => {
   const { url } = req.body;
-
   if (!url) {
     return res.status(400).json({ ok: false, error: "url_required" });
   }
-
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const ids = extractShopeeIds(finalUrl);
-
     return res.json({
       ok: !!ids,
       shopId: ids?.shopId || null,
@@ -667,20 +673,17 @@ app.post("/resolve/shopee", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/mercadolivre (específico)
+// POST /resolve/mercadolivre
 // =======================
 app.post("/resolve/mercadolivre", async (req, res) => {
   const { url } = req.body;
-
   if (!url) {
     return res.status(400).json({ ok: false, error: "url_required" });
   }
-
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const mlbId = extractMercadoLivreId(finalUrl);
-
     return res.json({
       ok: !!mlbId,
       mlbId,
@@ -698,20 +701,17 @@ app.post("/resolve/mercadolivre", async (req, res) => {
 });
 
 // =======================
-// POST /resolve/magalu (específico)
+// POST /resolve/magalu
 // =======================
 app.post("/resolve/magalu", async (req, res) => {
   const { url } = req.body;
-
   if (!url) {
     return res.status(400).json({ ok: false, error: "url_required" });
   }
-
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const magaluId = extractMagaluId(finalUrl);
-
     return res.json({
       ok: !!magaluId,
       magaluId,
@@ -732,7 +732,6 @@ app.post("/resolve/magalu", async (req, res) => {
 // Iniciar servidor
 // =======================
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`🚀 URL Resolver rodando na porta ${PORT}`);
   console.log(`📦 Suporta: Amazon, Shopee, Mercado Livre, Magalu`);
@@ -742,8 +741,7 @@ app.listen(PORT, () => {
   console.log(`   POST /resolve/shopee       - Apenas Shopee`);
   console.log(`   POST /resolve/mercadolivre - Apenas Mercado Livre`);
   console.log(`   POST /resolve/magalu       - Apenas Magalu`);
-  console.log(`   POST /amazon/sign          - Gera assinatura AWS V4 para PA-API`);
-  console.log(`   POST /amazon/product       - Busca produto Amazon direto`);
+  console.log(`   POST /amazon/sign          - Gera assinatura AWS V4`);
+  console.log(`   POST /amazon/product       - Busca produto Amazon`);
   console.log(`   GET  /health               - Health check`);
-  console.log(`✨ NOVO: Suporte a URLs sociais do Mercado Livre (/social/, /jms/, etc.)`);
 });

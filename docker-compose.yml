@@ -1,16 +1,27 @@
+version: '3.8'
+
 services:
   url-resolver:
     build: .
     container_name: url-resolver
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "3000:3000"
     environment:
-      - NODE_ENV=production
       - PORT=3000
+      - NODE_ENV=production
+      # Supabase - Encurtador
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - SHORT_DOMAIN=${SHORT_DOMAIN:-promo.envia.link}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

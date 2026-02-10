@@ -454,6 +454,7 @@ app.post("/amazon/product", async (req, res) => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}, Version 2.1`,
+          'Content-Type': 'application/json',
           'x-marketplace': 'www.amazon.com.br'
         },
         timeout: 30000

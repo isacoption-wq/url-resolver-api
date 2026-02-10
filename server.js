@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-const aws4 = require("aws4");
 
 const app = express();
 app.use(express.json());
@@ -164,14 +163,11 @@ function extractGoParameter(url) {
   if (!url) return null;
   
   try {
-    // Tentar extrair o parâmetro "go" da URL
     const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
     const goParam = urlObj.searchParams.get('go');
     
     if (goParam) {
-      // Decodificar a URL (pode estar duplamente encodada)
       let decoded = decodeURIComponent(goParam);
-      // Tentar decodificar novamente caso esteja duplamente encodada
       try {
         if (decoded.includes('%')) {
           decoded = decodeURIComponent(decoded);
@@ -182,7 +178,6 @@ function extractGoParameter(url) {
       return decoded;
     }
   } catch (e) {
-    // Fallback com regex
     const match = url.match(/[?&]go=([^&]+)/);
     if (match) {
       let decoded = decodeURIComponent(match[1]);
@@ -223,14 +218,12 @@ function needsFurtherResolution(url) {
 function extractRedirectFromHtml(html, baseUrl) {
   if (!html) return null;
   
-  // 1. Meta refresh
   const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'\s>]+)/i);
   if (metaMatch) {
     console.log(`[HTML] Found meta refresh: ${metaMatch[1]}`);
     return metaMatch[1];
   }
   
-  // 2. JavaScript redirect
   const jsPatterns = [
     /window\.location\.href\s*=\s*["']([^"']+)["']/i,
     /window\.location\s*=\s*["']([^"']+)["']/i,
@@ -246,21 +239,18 @@ function extractRedirectFromHtml(html, baseUrl) {
     }
   }
   
-  // 3. Canonical link
   const canonicalMatch = html.match(/<link[^>]*rel=["']?canonical["']?[^>]*href=["']([^"']+)["']/i);
   if (canonicalMatch && canonicalMatch[1].includes('/p/MLB')) {
     console.log(`[HTML] Found canonical: ${canonicalMatch[1]}`);
     return canonicalMatch[1];
   }
   
-  // 4. OG URL
   const ogMatch = html.match(/<meta[^>]*property=["']?og:url["']?[^>]*content=["']([^"']+)["']/i);
   if (ogMatch && ogMatch[1].includes('/p/MLB')) {
     console.log(`[HTML] Found og:url: ${ogMatch[1]}`);
     return ogMatch[1];
   }
   
-  // 5. Qualquer link com MLB ID no HTML
   const mlbMatch = html.match(/https?:\/\/[^"'\s]*\/p\/MLB\d{10,14}[^"'\s]*/i);
   if (mlbMatch) {
     console.log(`[HTML] Found MLB link: ${mlbMatch[0]}`);
@@ -282,7 +272,6 @@ async function resolveUrl(url, maxHops = 5) {
   while (hopCount < maxHops) {
     hopCount++;
     
-    // Verificar se há parâmetro "go=" para extrair
     if (currentUrl.includes('/gz/webdevice/') || currentUrl.includes('?go=')) {
       const goUrl = extractGoParameter(currentUrl);
       if (goUrl) {
@@ -292,9 +281,7 @@ async function resolveUrl(url, maxHops = 5) {
       }
     }
     
-    // Se não precisa mais resolução, retornar
     if (!needsFurtherResolution(currentUrl) && hopCount > 1) {
-      // Verificar se já temos um MLB ID
       const mlbId = extractMercadoLivreId(currentUrl);
       if (mlbId) {
         console.log(`[RESOLVE] Found MLB ID: ${mlbId}`);
@@ -302,7 +289,6 @@ async function resolveUrl(url, maxHops = 5) {
       }
     }
     
-    // Fazer requisição HTTP
     try {
       console.log(`[RESOLVE] Hop ${hopCount}: Fetching ${currentUrl}`);
       
@@ -317,7 +303,6 @@ async function resolveUrl(url, maxHops = 5) {
         }
       });
       
-      // URL após redirects HTTP
       const httpFinalUrl = res.request?.res?.responseUrl || 
                           res.request?._redirectable?._currentUrl || 
                           res.config?.url || 
@@ -325,11 +310,9 @@ async function resolveUrl(url, maxHops = 5) {
       
       console.log(`[RESOLVE] HTTP resolved to: ${httpFinalUrl}`);
       
-      // Se mudou via HTTP redirect
       if (httpFinalUrl !== currentUrl) {
         currentUrl = httpFinalUrl;
         
-        // Verificar se ainda precisa resolução
         if (!needsFurtherResolution(currentUrl)) {
           const mlbId = extractMercadoLivreId(currentUrl);
           if (mlbId) {
@@ -339,7 +322,6 @@ async function resolveUrl(url, maxHops = 5) {
         }
       }
       
-      // Verificar parâmetro "go" na URL resultante
       if (httpFinalUrl.includes('?go=')) {
         const goUrl = extractGoParameter(httpFinalUrl);
         if (goUrl) {
@@ -349,7 +331,6 @@ async function resolveUrl(url, maxHops = 5) {
         }
       }
       
-      // Analisar HTML se ainda estamos em URL social/promo
       if (needsFurtherResolution(currentUrl) && res.data && typeof res.data === 'string') {
         const htmlRedirect = extractRedirectFromHtml(res.data, currentUrl);
         if (htmlRedirect && htmlRedirect !== currentUrl) {
@@ -359,13 +340,11 @@ async function resolveUrl(url, maxHops = 5) {
         }
       }
       
-      // Se chegamos aqui e ainda não temos MLB, mas não há mais para onde ir
       break;
       
     } catch (err) {
       console.error(`[RESOLVE] Error on hop ${hopCount}: ${err.message}`);
       
-      // Tentar HEAD como fallback
       try {
         const headRes = await axios.head(currentUrl, {
           maxRedirects: 10,
@@ -391,148 +370,113 @@ async function resolveUrl(url, maxHops = 5) {
 }
 
 // =======================
-// POST /amazon/sign
+// Amazon Creators API - OAuth 2.0 Token Cache
 // =======================
-app.post("/amazon/sign", (req, res) => {
-  const { accessKey, secretKey, partnerTag, asin } = req.body;
-  if (!accessKey || !secretKey || !partnerTag || !asin) {
-    return res.status(400).json({
-      ok: false,
-      error: "missing_params",
-      message: "Campos obrigatórios: accessKey, secretKey, partnerTag, asin"
-    });
+const tokenCache = {};
+
+async function getOAuthToken(credentialId, credentialSecret) {
+  const cacheKey = credentialId;
+  const now = Date.now();
+
+  // Retornar token cacheado se ainda válido (com margem de 5 min)
+  if (tokenCache[cacheKey] && tokenCache[cacheKey].expiresAt > now + 300000) {
+    console.log(`[AUTH] Using cached token for ${credentialId.substring(0, 8)}...`);
+    return tokenCache[cacheKey].accessToken;
   }
-  try {
-    const host = 'webservices.amazon.com.br';
-    const region = 'us-east-1';
-    const service = 'ProductAdvertisingAPI';
-    const payload = {
-      "PartnerTag": partnerTag,
-      "PartnerType": "Associates",
-      "Marketplace": "www.amazon.com.br",
-      "ItemIds": [asin],
-      "Resources": [
-        "ItemInfo.Title",
-        "ItemInfo.Features",
-        "Offers.Listings.Price",
-        "Offers.Listings.SavingBasis",
-        "Offers.Listings.Promotions",
-        "Images.Primary.Large",
-        "Images.Primary.Medium"
-      ]
-    };
-    const body = JSON.stringify(payload);
-    const opts = {
-      host: host,
-      path: '/paapi5/getitems',
-      method: 'POST',
-      service: service,
-      region: region,
+
+  console.log(`[AUTH] Fetching new OAuth token for ${credentialId.substring(0, 8)}...`);
+
+  // Brasil = NA region = Version 2.1
+  const tokenEndpoint = 'https://creatorsapi.auth.us-east-1.amazoncognito.com/oauth2/token';
+
+  const response = await axios.post(tokenEndpoint, 
+    `grant_type=client_credentials&client_id=${encodeURIComponent(credentialId)}&client_secret=${encodeURIComponent(credentialSecret)}&scope=creatorsapi/default`,
+    {
       headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Encoding': 'amz-1.0',
-        'X-Amz-Target': 'com.amazon.paapi5.v1.ProductAdvertisingAPIv1.GetItems',
-        'Host': host
+        'Content-Type': 'application/x-www-form-urlencoded'
       },
-      body: body
-    };
-    const credentials = {
-      accessKeyId: accessKey,
-      secretAccessKey: secretKey
-    };
-    const signedRequest = aws4.sign(opts, credentials);
-    console.log(`[SIGN] ASIN: ${asin}, Partner: ${partnerTag}`);
-    return res.json({
-      ok: true,
-      asin: asin,
-      endpoint: `https://${host}/paapi5/getitems`,
-      payload: body,
-      headers: {
-        'Content-Type': signedRequest.headers['Content-Type'],
-        'Content-Encoding': signedRequest.headers['Content-Encoding'],
-        'Host': signedRequest.headers['Host'],
-        'X-Amz-Date': signedRequest.headers['X-Amz-Date'],
-        'X-Amz-Target': signedRequest.headers['X-Amz-Target'],
-        'Authorization': signedRequest.headers['Authorization']
-      }
-    });
-  } catch (err) {
-    console.error(`[SIGN ERROR] ${err.message}`);
-    return res.status(500).json({
-      ok: false,
-      error: "sign_failed",
-      message: err.message
-    });
-  }
-});
+      timeout: 15000
+    }
+  );
+
+  const { access_token, expires_in } = response.data;
+
+  tokenCache[cacheKey] = {
+    accessToken: access_token,
+    expiresAt: now + (expires_in * 1000)
+  };
+
+  console.log(`[AUTH] Token obtained, expires in ${expires_in}s`);
+  return access_token;
+}
 
 // =======================
-// POST /amazon/product
+// POST /amazon/product (Creators API v2.1)
 // =======================
 app.post("/amazon/product", async (req, res) => {
-  const { accessKey, secretKey, partnerTag, asin } = req.body;
-  if (!accessKey || !secretKey || !partnerTag || !asin) {
+  const { credentialId, credentialSecret, partnerTag, asin } = req.body;
+  if (!credentialId || !credentialSecret || !partnerTag || !asin) {
     return res.status(400).json({
       ok: false,
       error: "missing_params",
-      message: "Campos obrigatórios: accessKey, secretKey, partnerTag, asin"
+      message: "Campos obrigatórios: credentialId, credentialSecret, partnerTag, asin"
     });
   }
   try {
-    const host = 'webservices.amazon.com.br';
-    const region = 'us-east-1';
-    const service = 'ProductAdvertisingAPI';
+    // 1. Obter Bearer Token OAuth 2.0
+    const accessToken = await getOAuthToken(credentialId, credentialSecret);
+
+    // 2. Montar payload para Creators API
     const payload = {
-      "PartnerTag": partnerTag,
-      "PartnerType": "Associates",
-      "Marketplace": "www.amazon.com.br",
-      "ItemIds": [asin],
-      "Resources": [
-        "ItemInfo.Title",
-        "ItemInfo.Features",
-        "Offers.Listings.Price",
-        "Offers.Listings.SavingBasis",
-        "Offers.Listings.Promotions",
-        "Images.Primary.Large",
-        "Images.Primary.Medium"
+      itemIds: [asin],
+      itemIdType: "ASIN",
+      marketplace: "www.amazon.com.br",
+      partnerTag: partnerTag,
+      resources: [
+        "itemInfo.title",
+        "itemInfo.features",
+        "images.primary.large",
+        "images.primary.medium",
+        "offersV2.listings.price",
+        "offersV2.listings.dealDetails",
+        "offersV2.listings.condition",
+        "offersV2.listings.availability"
       ]
     };
-    const body = JSON.stringify(payload);
-    const opts = {
-      host: host,
-      path: '/paapi5/getitems',
-      method: 'POST',
-      service: service,
-      region: region,
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Encoding': 'amz-1.0',
-        'X-Amz-Target': 'com.amazon.paapi5.v1.ProductAdvertisingAPIv1.GetItems',
-        'Host': host
-      },
-      body: body
-    };
-    const credentials = {
-      accessKeyId: accessKey,
-      secretAccessKey: secretKey
-    };
-    const signedRequest = aws4.sign(opts, credentials);
-    console.log(`[PRODUCT] Fetching ASIN: ${asin}`);
-    const response = await axios({
-      method: 'POST',
-      url: `https://${host}/paapi5/getitems`,
-      headers: signedRequest.headers,
-      data: body,
-      timeout: 30000
-    });
+
+    console.log(`[PRODUCT] Fetching ASIN: ${asin} via Creators API`);
+
+    // 3. Chamar Creators API
+    const response = await axios.post(
+      'https://creatorsapi.amazon/catalog/v1/getItems',
+      payload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}, Version 2.1`,
+          'x-marketplace': 'www.amazon.com.br'
+        },
+        timeout: 30000
+      }
+    );
+
     console.log(`[PRODUCT] Success for ASIN: ${asin}`);
+
     return res.json({
       ok: true,
       asin: asin,
       data: response.data
     });
+
   } catch (err) {
     console.error(`[PRODUCT ERROR] ${err.message}`);
+
+    // Limpar cache de token em caso de erro de auth
+    if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+      delete tokenCache[credentialId];
+      console.log(`[AUTH] Token cache cleared for ${credentialId.substring(0, 8)}...`);
+    }
+
     if (err.response) {
       return res.status(err.response.status).json({
         ok: false,
@@ -741,7 +685,6 @@ app.listen(PORT, () => {
   console.log(`   POST /resolve/shopee       - Apenas Shopee`);
   console.log(`   POST /resolve/mercadolivre - Apenas Mercado Livre`);
   console.log(`   POST /resolve/magalu       - Apenas Magalu`);
-  console.log(`   POST /amazon/sign          - Gera assinatura AWS V4`);
-  console.log(`   POST /amazon/product       - Busca produto Amazon`);
+  console.log(`   POST /amazon/product       - Busca produto Amazon (Creators API v2.1)`);
   console.log(`   GET  /health               - Health check`);
 });

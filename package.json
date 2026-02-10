@@ -1,14 +1,13 @@
 {
   "name": "url-resolver",
-  "version": "2.0.0",
-  "description": "URL Resolver para Amazon e Shopee com assinatura AWS V4",
+  "version": "3.0.0",
+  "description": "URL Resolver para Amazon (Creators API v2.1), Shopee, ML, Magalu",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "aws4": "^1.13.2",
     "axios": "^1.6.2",
     "express": "^4.18.2"
   },

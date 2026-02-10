@@ -448,12 +448,13 @@ app.post("/amazon/product", async (req, res) => {
 
     // 3. Chamar Creators API
     const response = await axios.post(
-      'https://creatorsapi.amazon/catalog/v1/getItems',
+      'https://creatorsapi.amazon.com/catalog/v1/getItems',
       payload,
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}, Version 2.1`,
+          'Authorization': `Bearer ${accessToken},
+          'x-amz-creators-api-version': '2.1',
           'x-marketplace': 'www.amazon.com.br'
         },
         timeout: 30000

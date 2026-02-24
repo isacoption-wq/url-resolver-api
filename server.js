@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-
 const app = express();
 app.use(express.json());
 
@@ -106,17 +105,19 @@ function extractMagaluId(url) {
 
 // =======================
 // Detectar Plataforma
+// ✅ meli.la adicionado
 // =======================
 function detectPlatform(url) {
   if (!url) return "unknown";
   const lower = url.toLowerCase();
+
   if (lower.includes("amazon.") || lower.includes("amzn.to") || lower.includes("amzn.com") || lower.includes("a.co/")) {
     return "amazon";
   }
   if (lower.includes("shopee.") || lower.includes("shp.ee") || lower.includes("s.shopee.")) {
     return "shopee";
   }
-  if (lower.includes("mercadolivre.com") || lower.includes("mercadolibre.com") || lower.includes("meli.com") || lower.includes("produto.mercadolivre")) {
+  if (lower.includes("mercadolivre.com") || lower.includes("mercadolibre.com") || lower.includes("meli.com") || lower.includes("meli.la") || lower.includes("produto.mercadolivre")) {
     return "mercadolivre";
   }
   if (lower.includes("magazineluiza.com") || lower.includes("magazinevoce.com") || lower.includes("magalu.com")) {
@@ -127,6 +128,7 @@ function detectPlatform(url) {
 
 // =======================
 // Verificar se é short link ou URL especial
+// ✅ meli.la adicionado
 // =======================
 function isShortLink(url) {
   if (!url) return false;
@@ -138,8 +140,8 @@ function isShortLink(url) {
     // Shopee
     "shp.ee", "s.shopee.",
     // Mercado Livre - SHORT LINKS
-    "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/",
-    // Mercado Livre - SOCIAL/PROMO URLs (NOVO!)
+    "mercadolivre.com/sec/", "mercadolibre.com/sec/", "meli.com/", "meli.la",
+    // Mercado Livre - SOCIAL/PROMO URLs
     "/social/",
     "/jms/",
     "/gz/webdevice/",
@@ -377,35 +379,26 @@ const tokenCache = {};
 async function getOAuthToken(credentialId, credentialSecret) {
   const cacheKey = credentialId;
   const now = Date.now();
-
-  // Retornar token cacheado se ainda válido (com margem de 5 min)
   if (tokenCache[cacheKey] && tokenCache[cacheKey].expiresAt > now + 300000) {
     console.log(`[AUTH] Using cached token for ${credentialId.substring(0, 8)}...`);
     return tokenCache[cacheKey].accessToken;
   }
 
   console.log(`[AUTH] Fetching new OAuth token for ${credentialId.substring(0, 8)}...`);
-
-  // Brasil = NA region = Version 2.1
   const tokenEndpoint = 'https://creatorsapi.auth.us-east-1.amazoncognito.com/oauth2/token';
-
   const response = await axios.post(tokenEndpoint, 
     `grant_type=client_credentials&client_id=${encodeURIComponent(credentialId)}&client_secret=${encodeURIComponent(credentialSecret)}&scope=creatorsapi/default`,
     {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 15000
     }
   );
 
   const { access_token, expires_in } = response.data;
-
   tokenCache[cacheKey] = {
     accessToken: access_token,
     expiresAt: now + (expires_in * 1000)
   };
-
   console.log(`[AUTH] Token obtained, expires in ${expires_in}s`);
   return access_token;
 }
@@ -422,11 +415,9 @@ app.post("/amazon/product", async (req, res) => {
       message: "Campos obrigatórios: credentialId, credentialSecret, partnerTag, asin"
     });
   }
-  try {
-    // 1. Obter Bearer Token OAuth 2.0
-    const accessToken = await getOAuthToken(credentialId, credentialSecret);
 
-    // 2. Montar payload para Creators API
+  try {
+    const accessToken = await getOAuthToken(credentialId, credentialSecret);
     const payload = {
       itemIds: [asin],
       itemIdType: "ASIN",
@@ -445,8 +436,6 @@ app.post("/amazon/product", async (req, res) => {
     };
 
     console.log(`[PRODUCT] Fetching ASIN: ${asin} via Creators API`);
-
-    // 3. Chamar Creators API
     const response = await axios.post(
       'https://creatorsapi.amazon/catalog/v1/getItems',
       payload,
@@ -454,7 +443,6 @@ app.post("/amazon/product", async (req, res) => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}, Version 2.1`,
-          'Content-Type': 'application/json',
           'x-marketplace': 'www.amazon.com.br'
         },
         timeout: 30000
@@ -462,35 +450,19 @@ app.post("/amazon/product", async (req, res) => {
     );
 
     console.log(`[PRODUCT] Success for ASIN: ${asin}`);
-
-    return res.json({
-      ok: true,
-      asin: asin,
-      data: response.data
-    });
-
+    return res.json({ ok: true, asin: asin, data: response.data });
   } catch (err) {
     console.error(`[PRODUCT ERROR] ${err.message}`);
-
-    // Limpar cache de token em caso de erro de auth
     if (err.response && (err.response.status === 401 || err.response.status === 403)) {
       delete tokenCache[credentialId];
       console.log(`[AUTH] Token cache cleared for ${credentialId.substring(0, 8)}...`);
     }
-
     if (err.response) {
       return res.status(err.response.status).json({
-        ok: false,
-        error: "api_error",
-        status: err.response.status,
-        message: err.response.data
+        ok: false, error: "api_error", status: err.response.status, message: err.response.data
       });
     }
-    return res.status(500).json({
-      ok: false,
-      error: "request_failed",
-      message: err.message
-    });
+    return res.status(500).json({ ok: false, error: "request_failed", message: err.message });
   }
 });
 
@@ -500,32 +472,22 @@ app.post("/amazon/product", async (req, res) => {
 app.post("/resolve", async (req, res) => {
   const { url } = req.body;
   if (!url) {
-    return res.status(400).json({
-      ok: false,
-      error: "url_required",
-      message: "Campo 'url' é obrigatório"
-    });
+    return res.status(400).json({ ok: false, error: "url_required", message: "Campo 'url' é obrigatório" });
   }
+
   try {
     const needsResolve = isShortLink(url);
     let finalUrl = url;
-    
     if (needsResolve) {
       finalUrl = await resolveUrl(url);
     }
+
     const platform = detectPlatform(finalUrl);
     let result = {
-      ok: false,
-      platform,
-      original_url: url,
-      final_url: finalUrl,
-      was_short_link: needsResolve,
-      asin: null,
-      shopId: null,
-      itemId: null,
-      mlbId: null,
-      magaluId: null
+      ok: false, platform, original_url: url, final_url: finalUrl, was_short_link: needsResolve,
+      asin: null, shopId: null, itemId: null, mlbId: null, magaluId: null
     };
+
     if (platform === "amazon") {
       const asin = extractAmazonAsin(finalUrl);
       result.ok = !!asin;
@@ -547,16 +509,12 @@ app.post("/resolve", async (req, res) => {
       result.error = "unsupported_platform";
       result.message = "Plataforma não suportada. Use Amazon, Shopee, Mercado Livre ou Magalu.";
     }
+
     console.log(`[RESULT] Platform: ${platform}, OK: ${result.ok}, URL: ${url}`);
     return res.json(result);
   } catch (err) {
     console.error(`[ERROR] ${err.message}`);
-    return res.status(500).json({
-      ok: false,
-      error: "resolve_failed",
-      message: err.message,
-      original_url: url
-    });
+    return res.status(500).json({ ok: false, error: "resolve_failed", message: err.message, original_url: url });
   }
 });
 
@@ -565,26 +523,14 @@ app.post("/resolve", async (req, res) => {
 // =======================
 app.post("/resolve/amazon", async (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ ok: false, error: "url_required" });
-  }
+  if (!url) return res.status(400).json({ ok: false, error: "url_required" });
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const asin = extractAmazonAsin(finalUrl);
-    return res.json({
-      ok: !!asin,
-      asin,
-      original_url: url,
-      final_url: finalUrl,
-      was_short_link: needsResolve
-    });
+    return res.json({ ok: !!asin, asin, original_url: url, final_url: finalUrl, was_short_link: needsResolve });
   } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-      original_url: url
-    });
+    return res.status(500).json({ ok: false, error: err.message, original_url: url });
   }
 });
 
@@ -593,27 +539,14 @@ app.post("/resolve/amazon", async (req, res) => {
 // =======================
 app.post("/resolve/shopee", async (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ ok: false, error: "url_required" });
-  }
+  if (!url) return res.status(400).json({ ok: false, error: "url_required" });
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const ids = extractShopeeIds(finalUrl);
-    return res.json({
-      ok: !!ids,
-      shopId: ids?.shopId || null,
-      itemId: ids?.itemId || null,
-      original_url: url,
-      final_url: finalUrl,
-      was_short_link: needsResolve
-    });
+    return res.json({ ok: !!ids, shopId: ids?.shopId || null, itemId: ids?.itemId || null, original_url: url, final_url: finalUrl, was_short_link: needsResolve });
   } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-      original_url: url
-    });
+    return res.status(500).json({ ok: false, error: err.message, original_url: url });
   }
 });
 
@@ -622,26 +555,14 @@ app.post("/resolve/shopee", async (req, res) => {
 // =======================
 app.post("/resolve/mercadolivre", async (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ ok: false, error: "url_required" });
-  }
+  if (!url) return res.status(400).json({ ok: false, error: "url_required" });
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const mlbId = extractMercadoLivreId(finalUrl);
-    return res.json({
-      ok: !!mlbId,
-      mlbId,
-      original_url: url,
-      final_url: finalUrl,
-      was_short_link: needsResolve
-    });
+    return res.json({ ok: !!mlbId, mlbId, original_url: url, final_url: finalUrl, was_short_link: needsResolve });
   } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-      original_url: url
-    });
+    return res.status(500).json({ ok: false, error: err.message, original_url: url });
   }
 });
 
@@ -650,26 +571,14 @@ app.post("/resolve/mercadolivre", async (req, res) => {
 // =======================
 app.post("/resolve/magalu", async (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ ok: false, error: "url_required" });
-  }
+  if (!url) return res.status(400).json({ ok: false, error: "url_required" });
   try {
     const needsResolve = isShortLink(url);
     const finalUrl = needsResolve ? await resolveUrl(url) : url;
     const magaluId = extractMagaluId(finalUrl);
-    return res.json({
-      ok: !!magaluId,
-      magaluId,
-      original_url: url,
-      final_url: finalUrl,
-      was_short_link: needsResolve
-    });
+    return res.json({ ok: !!magaluId, magaluId, original_url: url, final_url: finalUrl, was_short_link: needsResolve });
   } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-      original_url: url
-    });
+    return res.status(500).json({ ok: false, error: err.message, original_url: url });
   }
 });
 

@@ -39,9 +39,26 @@ function extractShopeeIds(url) {
 
 // =======================
 // Extrator Amazon ASIN
+// ✅ Adicionado handler para sspa/click (a.co/d/ pode resolver para esses)
 // =======================
 function extractAmazonAsin(url) {
   if (!url) return null;
+
+  // ✅ NOVO: Amazon sspa/click — ASIN fica encodado no parâmetro ?url=
+  if (url.includes('/sspa/click')) {
+    try {
+      const urlObj = new URL(url);
+      const innerUrl = urlObj.searchParams.get('url');
+      if (innerUrl) {
+        const decoded = decodeURIComponent(innerUrl);
+        const m = decoded.match(/\/dp\/([A-Z0-9]{10})/i);
+        if (m) return m[1].toUpperCase();
+      }
+    } catch (e) {
+      console.warn(`[ASIN] Falha ao parsear sspa/click: ${e.message}`);
+    }
+  }
+
   const patterns = [
     /\/dp\/([A-Z0-9]{10})/i,
     /\/gp\/product\/([A-Z0-9]{10})/i,
@@ -128,6 +145,7 @@ function detectPlatform(url) {
 
 // =======================
 // Verificar se é short link ou URL especial
+// ✅ a.co/d/ adicionado explicitamente (novo formato Amazon)
 // ✅ meli.la adicionado
 // =======================
 function isShortLink(url) {
@@ -135,8 +153,8 @@ function isShortLink(url) {
   const lower = url.toLowerCase();
   
   const shortPatterns = [
-    // Amazon
-    "amzn.to", "amzn.com/", "a.co/",
+    // Amazon — ✅ a.co/d/ primeiro para match mais específico
+    "amzn.to", "amzn.com/", "a.co/d/", "a.co/",
     // Shopee
     "shp.ee", "s.shopee.",
     // Mercado Livre - SHORT LINKS
@@ -196,7 +214,8 @@ function extractGoParameter(url) {
 }
 
 // =======================
-// Verificar se URL ainda precisa de resolução (ML)
+// Verificar se URL ainda precisa de resolução
+// ✅ sspa/click adicionado (Amazon patrocinado, pode vir de a.co/d/)
 // =======================
 function needsFurtherResolution(url) {
   if (!url) return false;
@@ -208,7 +227,8 @@ function needsFurtherResolution(url) {
     "/gz/webdevice/",
     "/deals/",
     "/ofertas/",
-    "forceInApp=true"
+    "forceInApp=true",
+    "/sspa/click"   // ✅ NOVO: Amazon sponsored placement
   ];
   
   return unresolvedPatterns.some(p => lower.includes(p));

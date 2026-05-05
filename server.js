@@ -393,8 +393,16 @@ async function resolveUrl(url, maxHops = 5) {
 
 // =======================
 // Amazon Creators API - OAuth 2.0 Token Cache
+// Suporta v2.x (Cognito) e v3.x (LwA)
 // =======================
 const tokenCache = {};
+
+function detectCredentialVersion(credentialId) {
+  // v3.x: começa com "amzn1.application-oa2-client."
+  // v2.x: começa com "amzn1.application-oa2-client." também, mas o secret tem formato diferente
+  // Forma mais confiável: checar o secret — v3.x secret começa com "amzn1.oa2-cs.v1."
+  return "v3"; // credenciais novas são sempre v3.x via painel atualizado
+}
 
 async function getOAuthToken(credentialId, credentialSecret) {
   const cacheKey = credentialId;
@@ -404,22 +412,45 @@ async function getOAuthToken(credentialId, credentialSecret) {
     return tokenCache[cacheKey].accessToken;
   }
 
-  console.log(`[AUTH] Fetching new OAuth token for ${credentialId.substring(0, 8)}...`);
-  const tokenEndpoint = 'https://creatorsapi.auth.us-east-1.amazoncognito.com/oauth2/token';
-  const response = await axios.post(tokenEndpoint, 
-    `grant_type=client_credentials&client_id=${encodeURIComponent(credentialId)}&client_secret=${encodeURIComponent(credentialSecret)}&scope=creatorsapi/default`,
-    {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 15000
-    }
-  );
+  const version = credentialSecret.startsWith('amzn1.oa2-cs.v1.') ? 'v3' : 'v2';
+  console.log(`[AUTH] Fetching new OAuth token (${version}) for ${credentialId.substring(0, 8)}...`);
+
+  let response;
+
+  if (version === 'v3') {
+    // ✅ v3.x — LwA endpoint, JSON body, scope com "::"
+    response = await axios.post(
+      'https://api.amazon.com/auth/o2/token',
+      {
+        grant_type: 'client_credentials',
+        client_id: credentialId,
+        client_secret: credentialSecret,
+        scope: 'creatorsapi::default'
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 15000
+      }
+    );
+  } else {
+    // v2.x — Cognito endpoint, form-urlencoded, scope com "/"
+    response = await axios.post(
+      'https://creatorsapi.auth.us-east-1.amazoncognito.com/oauth2/token',
+      `grant_type=client_credentials&client_id=${encodeURIComponent(credentialId)}&client_secret=${encodeURIComponent(credentialSecret)}&scope=creatorsapi/default`,
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 15000
+      }
+    );
+  }
 
   const { access_token, expires_in } = response.data;
   tokenCache[cacheKey] = {
     accessToken: access_token,
-    expiresAt: now + (expires_in * 1000)
+    expiresAt: now + (expires_in * 1000),
+    version
   };
-  console.log(`[AUTH] Token obtained, expires in ${expires_in}s`);
+  console.log(`[AUTH] Token obtained (${version}), expires in ${expires_in}s`);
   return access_token;
 }
 
@@ -462,7 +493,10 @@ app.post("/amazon/product", async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}, Version 2.1`,
+          // ✅ v3.x: sem ", Version X.X" no header
+          'Authorization': tokenCache[credentialId]?.version === 'v2'
+            ? `Bearer ${accessToken}, Version 2.1`
+            : `Bearer ${accessToken}`,
           'x-marketplace': 'www.amazon.com.br'
         },
         timeout: 30000

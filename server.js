@@ -479,10 +479,11 @@ app.post("/amazon/product", async (req, res) => {
         "itemInfo.features",
         "images.primary.large",
         "images.primary.medium",
+        "images.primary.small",
         "offersV2.listings.price",
-        "offersV2.listings.dealDetails",
         "offersV2.listings.condition",
-        "offersV2.listings.availability"
+        "offersV2.listings.availability",
+        "parentASIN"
       ]
     };
 
@@ -507,6 +508,10 @@ app.post("/amazon/product", async (req, res) => {
     return res.json({ ok: true, asin: asin, data: response.data });
   } catch (err) {
     console.error(`[PRODUCT ERROR] ${err.message}`);
+    if (err.response) {
+      console.error(`[PRODUCT ERROR] Status: ${err.response.status}`);
+      console.error(`[PRODUCT ERROR] Body: ${JSON.stringify(err.response.data)}`);
+    }
     if (err.response && (err.response.status === 401 || err.response.status === 403)) {
       delete tokenCache[credentialId];
       console.log(`[AUTH] Token cache cleared for ${credentialId.substring(0, 8)}...`);
